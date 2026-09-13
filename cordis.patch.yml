@@ -1,0 +1,12 @@
+# dsh-session-reattach bundle patch：把「会话归位」插件插入 profile 名单。
+#
+# 宿主半边（lib/index.js）注册两个入口：
+#   - HTTP 路由 /session-reattach：供浏览器半边（exports "./client"）在拖拽落点调用；
+#   - 斜杠命令 /reattach：手工 dry-run 与执行，不经过模型。
+#
+# 安装：
+#   dsh plugin --profile web add link:<本仓库绝对路径>
+# 装完重启 dsh web 生效。
+- insert:
+    - id: dsh-session-reattach
+      name: 'dsh-session-reattach'

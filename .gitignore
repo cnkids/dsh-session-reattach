@@ -1,0 +1,10 @@
+node_modules/
+coverage/
+.scannerwork/
+*.log
+.DS_Store
+
+# 本地 agent 配置：与 dsh-palimpsest / team-manage / deepseek-harness-desktop
+# 保持一致，不入库
+AGENTS.md
+.agents/
