@@ -43,8 +43,8 @@ DSH 只接受 `cwd` 与工作区目录完全一致的归属，所以这个插件
 - **补的是 DSH 的一个真实空白** —— `Workspace.attachSession` 只在**新建会话 / 新建子代理**时被调用；历史会话的自动收养在 `WorkspaceRegistry` 初始化时**只跑一次**（`initialized` 落盘即永不再跑）；而全部 `@Remote(...)` 端点里**没有任何 attach 类方法**。于是「会话移动过 ⇒ 永久游离」没有任何修复入口，本插件就是那个入口。
 - **只改归属，不碰会话文件** —— 不做任何文件写入，会话日志（`session.jsonl.zstd`）与首帧 `cwd` 都不动。与「改会话首帧 `cwd` 把自己挂到别处」是两条路。
 - **写入权威只有 DSH** —— 归属校验与落盘全部走 `Workspace.attachSession` / `detachSession`；插件自己不做路径判定以外的任何决定，也不直接写 `workspace.json`。
-- **先清后挂** —— 归位前先从**其余**工作区清掉该会话的陈旧槽位。这不是洁癖：`attachSession` 不复核别的工作区，而 registry 启动校验会因为同一会话被两个工作区记账而**直接抛错、整个工作区域不可用**；顺序错了就会踩这个坑（`audit/poc4` 已证实）。
-- **同 canon 判定** —— 用 `fs.realpath` 把会话 `cwd` 与工作区 `path` 归一到同一套 canon 再比较：尾斜杠、`..`、符号链接、大小写差异都不会误判；判定结果与真实 `WorkspaceEntity` **逐条一致**（`audit/poc3`）。
+- **先清后挂** —— 归位前先从**其余**工作区清掉该会话的陈旧槽位。这不是洁癖：`attachSession` 不复核别的工作区，而 registry 启动校验会因为同一会话被两个工作区记账而**直接抛错、整个工作区域不可用**；顺序错了就会踩这个坑（审计已证实）。
+- **同 canon 判定** —— 用 `fs.realpath` 把会话 `cwd` 与工作区 `path` 归一到同一套 canon 再比较：尾斜杠、`..`、符号链接、大小写差异都不会误判；判定结果与真实 `WorkspaceEntity` **逐条一致**（审计逐条比对过）。
 - **默认 dry-run** —— 只有显式 `"dryRun": false`（或命令里写 `apply`）才写入；`"false"` 字符串、`0`、`null`、`[]` 一律仍是 dry-run。
 - **拖拽时只高亮合法落点** —— 开始拖动的那一刻就算出该会话唯一能去的工作区（浏览器侧用 `SessionSummary.cwd` 预筛），只有那个分组接受放置；其余分组显示禁止光标。判断只作提示，**最终以宿主判定为准**。
 - **失败关闭** —— 清槽位失败就放弃 attach（绝不冒双归属的险）；会话数量超上限会**明说**「还有 N 个更早的会话未参与判定」，不假装看全了；上游改了侧边栏结构就整体静默（什么都不做，绝不写错数据）。
@@ -146,7 +146,7 @@ dsh plugin --profile web add "link:$(pwd)"
 
 这是一条**会写工作区归属**的通道，所以边界要说清楚，而不是笼统说「安全」：
 
-1. **请求信任** —— 路由与 `/api` 用的是**同一套**守卫：`Host` 必须是回环或受信、`Origin` 存在时必须与 Host 同源、`Sec-Fetch-Site: cross-site` 直接拒，之后还要过浏览器认证。实测未认证 / 跨源 / `Origin: null` / 伪造 Host 一律 401/403，且**先拒绝、后不解析业务体**（`audit/poc7`，对着运行中的宿主跑）。
+1. **请求信任** —— 路由与 `/api` 用的是**同一套**守卫：`Host` 必须是回环或受信、`Origin` 存在时必须与 Host 同源、`Sec-Fetch-Site: cross-site` 直接拒，之后还要过浏览器认证。实测未认证 / 跨源 / `Origin: null` / 伪造 Host 一律 401/403，且**先拒绝、后不解析业务体**（审计对运行中的宿主实测）。
 2. **默认不写** —— 只有显式 `"dryRun": false` 才落盘；类型混淆打不开这个开关。
 3. **失败关闭** —— 清槽位失败就放弃 attach；计划数据形状不对时前端不猜落点；上游改了侧边栏 DOM，拖拽整体静默。
 4. **不越权** —— 只用 `attachSession` / `detachSession`，不写文件、不起子进程、不联网。
@@ -169,7 +169,7 @@ dsh plugin --profile web add "link:$(pwd)"
 | 允许的落点 | 只有 `cwd` 与工作区目录**完全一致**的那一个（宿主硬校验） | 由插件自己定义，通常任意 |
 | 写入面 | 两个已存在的宿主 API（`attachSession` / `detachSession`） | 自建存储 / 索引与迁移逻辑 |
 | 运行时依赖 | **零**（不 import 任何 DSH 包） | 常见对 DSH 内部包的直接依赖 |
-| 安全审计 | 有（`audit/`：8 条 PoC / 225 条断言，含真 socket 与真实实体） | 未见 |
+| 安全审计 | 有（8 条 PoC：真 socket、真实 `WorkspaceEntity`、运行中宿主的守卫探测；产物不随仓库分发） | 未见 |
 
 **与 `dsh-palimpsest` 的关系（一处常见误判）**：`palimpsest` 的硬范围**只比对会话头 `cwd`**，候选来自 `sessionQuery.listSessions()`（live + 全部持久化会话），**与工作区归属无关**。所以一个「未分组」会话只要 `cwd` 等于当前会话的 `cwd`，`palimpsest` 今天就能读到它 —— 本插件修的是**侧边栏分组与工作区记账**，不是 `palimpsest` 的可见性。两者解耦，不需要为彼此改一行代码。
 
@@ -201,17 +201,14 @@ dsh plugin --profile web add "link:$(pwd)"
 
 ```sh
 npm test                       # 121 个用例：纯逻辑单测 + 宿主装配 + HTTP 真 socket + 浏览器半边行为
-npm run coverage               # 同上，并生成 coverage/lcov.info
-node audit/run-all.mjs         # 安全审计 8 条 PoC（225 条断言）
-DSH_WEB_PORT=53001 node audit/run-all.mjs   # 追加真实宿主守卫探测
-node scripts/build-client.mjs  # 改了 client-core.js / client-dom.js 后必须重新生成
+npm run coverage               # 同上，并生成 coverage/lcov.infonode scripts/build-client.mjs  # 改了 client-core.js / client-dom.js 后必须重新生成
 ```
 
 覆盖率（Node 内置统计）：行 99.60%、函数 99.13%、分支 96.24%。
 
 **改了 `lib/client-core.js` 或 `scripts/client-dom.js` 一定要重新生成 `lib/client.js`**；忘记生成会让 `test/client.test.mjs` 的漂移检查失败。浏览器端 bundle 必须是 classic script（内置模块系统用 `<script src>` 加载），既不能写 `import` / `export`，也不能被 Node 直接 import —— 这就是「纯逻辑单独成模块 + 生成」的原因。
 
-**安全审计**：`audit/` 下有结论报告（`audit/security-audit-dsh-session-reattach.md`）与 8 条可独立运行的 PoC。其中 `poc3` / `poc4` **不替身**关键的写入路径 —— 它们直接构造真实的 `WorkspaceEntity`，只给它内存版的表与会话头；`poc7` 需要 `DSH_WEB_PORT`。
+**安全审计**：8 条可独立运行的 PoC（真 socket 的 413/HTTP 语义、与真实 `WorkspaceEntity` 的逐条比对、以及针对运行中宿主的守卫探测）在仓库外维护，**不随仓库分发**；结论已并入上文「安全边界」。
 
 **SonarQube**：
 
@@ -242,7 +239,7 @@ export SONAR_TOKEN_DSH_SESSION_REATTACH=sqp_xxxxxxxx
 
 ### 发布（npm + GitHub Actions）
 
-`v*` tag 由 `.github/workflows/release.yml` 接管：校验 tag 与 `package.json` 版本一致 → `npm ci` → `npm audit` → `npm test` → 审计 PoC → `npm publish --provenance`（**OIDC，无需任何 token secret**）→ 建 GitHub Release 并附 `.tgz`；`main` 推送与 PR 由 `ci.yml` 跑同一套测试与审计。
+`v*` tag 由 `.github/workflows/release.yml` 接管：校验 tag 与 `package.json` 版本一致 → `npm ci` → `npm audit` → `npm test` → `npm publish --provenance`（**OIDC，无需任何 token secret**）→ 建 GitHub Release 并附 `.tgz`；`main` 推送与 PR 由 `ci.yml` 跑同一套测试与审计。
 
 **首次发布必须先手工做一次**：npm 没有 `pending publisher`，包在 registry 上不存在时**无法配置 Trusted Publisher**（会得到误导性的 `404 … is not in this registry`）。顺序是：
 
@@ -274,7 +271,7 @@ git tag v0.1.1 && git push origin v0.1.1
 
 | 版本 | 变更 |
 | --- | --- |
-| **0.1.1** | 安全审计落地：体积超限不再拆连接（413 必达）、路由加错误边界（宿主故障回可诊断的 JSON 500 而不是空 400）、会话数量截断如实上报（不再谎报「没有可归位的会话」）；并入 `audit/`（审计报告 + 8 条 PoC / 225 条断言，含真 socket 与真实 `WorkspaceEntity`）；README 按 `dsh-palimpsest` 版式重排并补安全边界；用例 105 → 121 |
+| **0.1.1** | 安全审计落地：体积超限不再拆连接（413 必达）、路由加错误边界（宿主故障回可诊断的 JSON 500 而不是空 400）、会话数量截断如实上报（不再谎报「没有可归位的会话」）；完成安全审计（8 条 PoC：真 socket、真实 `WorkspaceEntity`、运行中宿主的守卫探测；产物不随仓库分发）；README 按 `dsh-palimpsest` 版式重排并补安全边界；用例 105 → 121 |
 | **0.1.0** | 首个版本：宿主侧归位核心（realpath 同 canon 判定、五类分类、先 detach 后 attach）、HTTP 路由（复用 `/api` 守卫、默认 dry-run）、`/reattach [apply] [subagents]` 命令、浏览器半边拖拽落点（预筛高亮 + 提示条）、零运行时依赖 |
 
 ## 许可证

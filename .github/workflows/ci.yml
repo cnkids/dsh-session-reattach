@@ -36,8 +36,3 @@ jobs:
 
       - name: 测试
         run: npm test
-
-      # poc3/poc4 需要本机真实 @deepseek-ai/dsh-workspace，CI 上自行跳过（退出码 0）；
-      # 其余 PoC 真跑，包含真 socket 的 413/HTTP 语义、DOM 注入面与产物完整性。
-      - name: 安全审计 PoC
-        run: node audit/run-all.mjs

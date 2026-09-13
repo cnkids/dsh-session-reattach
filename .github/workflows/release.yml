@@ -1,6 +1,6 @@
 name: Release
 
-# 推 v* tag 即自动：校验版本 → 跑测试与审计 → 发布 npm（Trusted Publishing/OIDC，无需 token）
+# 推 v* tag 即自动：校验版本 → 跑测试 → 发布 npm（Trusted Publishing/OIDC，无需 token）
 # → 建 Release 并上传 .tgz。
 # 前置（只需做一次）：在 npmjs.com 上为本仓库配置 Trusted Publisher，见 README「发布」一节。
 #
@@ -11,6 +11,8 @@ name: Release
 #     required_reviewers 审批返回 500 且运行被取消）。发布靠 OIDC 短时令牌 + provenance 兜底。
 #   - action 固定到 commit SHA（tag 是可变的）；checkout 不持久化凭据。
 #   - npm 版本固定；依赖走 package-lock.json（npm ci）；构建期做依赖漏洞扫描。
+#
+# 安全审计（8 条 PoC）在仓库外维护、不随仓库分发，因此发布门禁只跑测试。
 on:
   push:
     tags:
@@ -52,11 +54,6 @@ jobs:
 
       - name: 测试
         run: npm test
-
-      # poc3/poc4 要真实 @deepseek-ai/dsh-workspace，CI 上取不到会自行打印「跳过」并以 0 退出；
-      # 其余 PoC 全部真跑（含真 socket 的 413/HTTP 语义与产物完整性）。
-      - name: 安全审计 PoC
-        run: node audit/run-all.mjs
 
   publish:
     needs: build

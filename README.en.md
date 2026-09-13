@@ -44,8 +44,8 @@ plugin can send a session back to the directory it already belongs to, but not i
 - **Fills a real DSH gap** — `Workspace.attachSession` is called only when a session/subagent is **created**; automatic adoption of history runs **exactly once** during `WorkspaceRegistry` init (once `initialized` is durable it never runs again); and every `@Remote(...)` endpoint is attach-free. So "session moved ⇒ permanently ungrouped" had no repair path. This plugin is that path.
 - **Ownership only, never session files** — no filesystem writes at all; neither the session log (`session.jsonl.zstd`) nor the header `cwd` is touched. That is a different route from "rewrite the header `cwd` so the session hangs itself somewhere else".
 - **DSH is the only write authority** — validation and persistence go through `Workspace.attachSession` / `detachSession`; the plugin decides nothing beyond path matching and never writes `workspace.json` itself.
-- **Clean first, then attach** — before attaching, the plugin clears the session's stale slots from **every other** workspace. Not fastidiousness: `attachSession` does not cross-check other workspaces, and the registry's startup validation **throws and makes the whole workspace domain unusable** when one session is accounted twice. Getting the order wrong hits exactly that (proven by `audit/poc4`).
-- **Same canon** — session `cwd` and workspace `path` are both normalized through `fs.realpath` before comparison, so trailing slashes, `..`, symlinks and case differences cannot cause false matches. Results agree **case by case with the real `WorkspaceEntity`** (`audit/poc3`).
+- **Clean first, then attach** — before attaching, the plugin clears the session's stale slots from **every other** workspace. Not fastidiousness: `attachSession` does not cross-check other workspaces, and the registry's startup validation **throws and makes the whole workspace domain unusable** when one session is accounted twice. Getting the order wrong hits exactly that (proven by the audit).
+- **Same canon** — session `cwd` and workspace `path` are both normalized through `fs.realpath` before comparison, so trailing slashes, `..`, symlinks and case differences cannot cause false matches. Results agree **case by case with the real `WorkspaceEntity`** (verified case by case by the audit).
 - **Dry-run by default** — writes require an explicit `"dryRun": false` (or `apply` on the command); `"false"`, `0`, `null`, `[]` all stay dry-run.
 - **Only the legal drop target lights up** — the moment a drag starts, the one workspace that can accept the session is computed (client-side pre-filter from `SessionSummary.cwd`) and only that group accepts the drop; every other group shows a not-allowed cursor. The hint is advisory — **the host remains authoritative**.
 - **Fail closed** — a failed stale-slot cleanup aborts the attach (never risk dual ownership); a capped session list is **reported** ("N older sessions were not inspected") instead of pretending to be complete; if the sidebar structure changes upstream, drag and drop goes fully silent (does nothing rather than writing the wrong thing).
@@ -145,7 +145,7 @@ Five mismatch causes, each with its own message:
 
 This is a channel that **writes workspace membership**, so the boundaries are spelled out instead of a blanket "it is safe":
 
-1. **Request trust** — the route uses the **same** guard as `/api`: `Host` must be loopback or trusted, `Origin` when present must match the Host, `Sec-Fetch-Site: cross-site` is refused outright, and browser authentication follows. Unauthenticated, cross-origin, `Origin: null` and spoofed-Host requests were all measured at 401/403, and **rejection happens before the body is parsed** (`audit/poc7`, run against the live host).
+1. **Request trust** — the route uses the **same** guard as `/api`: `Host` must be loopback or trusted, `Origin` when present must match the Host, `Sec-Fetch-Site: cross-site` is refused outright, and browser authentication follows. Unauthenticated, cross-origin, `Origin: null` and spoofed-Host requests were all measured at 401/403, and **rejection happens before the body is parsed** (audit probes against the live host).
 2. **No writes by default** — only an explicit `"dryRun": false` persists anything; type confusion cannot flip the switch.
 3. **Fail closed** — a failed stale-slot cleanup aborts the attach; the client never guesses a drop target from malformed state; a changed sidebar DOM silences drag and drop entirely.
 4. **Least privilege** — only `attachSession` / `detachSession`; no file writes, no subprocesses, no network.
@@ -168,7 +168,7 @@ The usual take on this problem is a "session mover" (drag migration, bulk operat
 | Allowed target | Only the workspace whose directory **equals** the `cwd` (host validation) | Plugin-defined, usually anything |
 | Write surface | Two existing host APIs (`attachSession` / `detachSession`) | Own storage/index plus migration logic |
 | Runtime dependencies | **Zero** (no DSH package imported) | Commonly direct dependencies on DSH internals |
-| Security audit | Yes (`audit/`: 8 PoCs / 225 assertions, incl. real sockets and the real entity) | Not seen |
+| Security audit | Yes (8 PoCs: real sockets, the real `WorkspaceEntity`, live-host guard probes; artefacts are not shipped with the repo) | Not seen |
 
 **Relationship to `dsh-palimpsest` (a common misdiagnosis)**: palimpsest's hard scope compares **session header `cwd` only**; its candidates come from `sessionQuery.listSessions()` (live + all persisted sessions) and **have nothing to do with workspace accounting**. So an "ungrouped" session is already readable by palimpsest as long as its `cwd` equals the calling session's `cwd` — this plugin fixes **sidebar grouping and workspace bookkeeping**, not palimpsest visibility. The two stay decoupled; neither needs changes for the other.
 
@@ -200,17 +200,14 @@ The usual take on this problem is a "session mover" (drag migration, bulk operat
 
 ```sh
 npm test                       # 121 tests: pure logic + host assembly + real-socket HTTP + browser-half behaviour
-npm run coverage               # same, plus coverage/lcov.info
-node audit/run-all.mjs         # security audit: 8 PoCs (225 assertions)
-DSH_WEB_PORT=53001 node audit/run-all.mjs   # adds the live-host guard probe
-node scripts/build-client.mjs  # regenerate after editing client-core.js / client-dom.js
+npm run coverage               # same, plus coverage/lcov.infonode scripts/build-client.mjs  # regenerate after editing client-core.js / client-dom.js
 ```
 
 Coverage (Node's built-in reporter): 99.60% lines, 99.13% functions, 96.24% branches.
 
 **Always regenerate `lib/client.js` after editing `lib/client-core.js` or `scripts/client-dom.js`** — the drift check in `test/client.test.mjs` fails otherwise. The browser bundle must be a classic script (the built-in module system loads it via `<script src>`), so it can neither use ESM syntax nor be imported by Node; hence "pure module + generation".
 
-**Security audit**: `audit/` holds the report (`audit/security-audit-dsh-session-reattach.md`) and 8 standalone PoCs. `poc3` / `poc4` do **not** stub the critical write path — they construct the real `WorkspaceEntity` and only supply an in-memory table plus session headers; `poc7` needs `DSH_WEB_PORT`.
+**Security audit**: 8 standalone PoCs (real-socket 413/HTTP semantics, case-by-case comparison against the real `WorkspaceEntity`, and guard probes against a live host) are maintained outside this repository and **not shipped with it**; their conclusions are folded into "Security boundaries" above.
 
 **SonarQube**:
 
@@ -241,7 +238,7 @@ export SONAR_TOKEN_DSH_SESSION_REATTACH=sqp_xxxxxxxx
 
 ### Releasing (npm + GitHub Actions)
 
-A `v*` tag is handled by `.github/workflows/release.yml`: tag↔version check → `npm ci` → `npm audit` → `npm test` → audit PoCs → `npm publish --provenance` (**OIDC, no token secret at all**) → create the GitHub Release with the `.tgz` attached. Pushes to `main` and PRs run the same tests and audit through `ci.yml`.
+A `v*` tag is handled by `.github/workflows/release.yml`: tag↔version check → `npm ci` → `npm audit` → `npm test` → `npm publish --provenance` (**OIDC, no token secret at all**) → create the GitHub Release with the `.tgz` attached. Pushes to `main` and PRs run the same tests and audit through `ci.yml`.
 
 **The very first publish must be done by hand** — npm has no pending publisher, so a package that does not exist yet **cannot be configured for trusted publishing** (you get a misleading `404 … is not in this registry`). The order is:
 
@@ -275,7 +272,7 @@ Three measured gotchas:
 
 | Version | Changes |
 | --- | --- |
-| **0.1.1** | Security audit landed: an oversized body no longer kills the connection (413 is delivered), the route has an error boundary (host faults return a diagnosable JSON 500 instead of an empty 400), and a capped session list is reported honestly (no more false "nothing to re-attach"). Adds `audit/` (report + 8 PoCs / 225 assertions, incl. real sockets and the real `WorkspaceEntity`); README restructured to match `dsh-palimpsest` and given security boundaries; tests 105 → 121 |
+| **0.1.1** | Security audit landed: an oversized body no longer kills the connection (413 is delivered), the route has an error boundary (host faults return a diagnosable JSON 500 instead of an empty 400), and a capped session list is reported honestly (no more false "nothing to re-attach"). Audited with 8 PoCs (real sockets, the real `WorkspaceEntity`, live-host guard probes; artefacts are not shipped with the repo); README restructured to match `dsh-palimpsest` and given security boundaries; tests 105 → 121 |
 | **0.1.0** | First release: host-side re-attach core (realpath canon, five-way classification, detach-then-attach), HTTP route reusing the `/api` guard with dry-run by default, `/reattach [apply] [subagents]`, browser-half drag and drop (pre-filtered highlight + toast), zero runtime dependencies |
 
 ## License

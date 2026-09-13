@@ -9,3 +9,6 @@ coverage/
 # 保持一致，不入库
 AGENTS.md
 .agents/
+
+# 安全审计产物（报告 + PoC）不随仓库分发，仅在本地维护
+audit/
