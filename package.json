@@ -14,6 +14,14 @@
     "type": "git",
     "url": "git+https://github.com/cnkids/dsh-session-reattach.git"
   },
+  "homepage": "https://github.com/cnkids/dsh-session-reattach#readme",
+  "bugs": {
+    "url": "https://github.com/cnkids/dsh-session-reattach/issues"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
   "files": [
     "lib",
     "cordis.patch.yml",

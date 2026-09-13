@@ -1,0 +1,110 @@
+name: Release
+
+# 推 v* tag 即自动：校验版本 → 跑测试与审计 → 发布 npm（Trusted Publishing/OIDC，无需 token）
+# → 建 Release 并上传 .tgz。
+# 前置（只需做一次）：在 npmjs.com 上为本仓库配置 Trusted Publisher，见 README「发布」一节。
+#
+# 形态与兄弟项目 dsh-palimpsest / dsh-office-toolkit 的成功形态一致，安全审计 F3/F6 的硬化：
+#   - 构建与发布拆成两个 job，`id-token: write` 只给发布 job —— 否则连 `npm install -g npm@…`
+#     这一步都能申请到可发布 npm 的 OIDC token。
+#   - 发布 job **不引用受保护环境**：审批门在 GitHub 侧故障时会直接卡死发布（实测
+#     required_reviewers 审批返回 500 且运行被取消）。发布靠 OIDC 短时令牌 + provenance 兜底。
+#   - action 固定到 commit SHA（tag 是可变的）；checkout 不持久化凭据。
+#   - npm 版本固定；依赖走 package-lock.json（npm ci）；构建期做依赖漏洞扫描。
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: 校验 tag 与 package.json 版本一致
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          echo "tag=$TAG package=$PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::tag v$TAG 与 package.json $PKG 不一致"
+            exit 1
+          fi
+
+      # 本插件零运行时依赖；lockfile 只用于固定 npm ci 的输入
+      - name: 安装依赖
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: 依赖漏洞扫描
+        run: npm audit --audit-level=high
+
+      - name: 测试
+        run: npm test
+
+      # poc3/poc4 要真实 @deepseek-ai/dsh-workspace，CI 上取不到会自行打印「跳过」并以 0 退出；
+      # 其余 PoC 全部真跑（含真 socket 的 413/HTTP 语义与产物完整性）。
+      - name: 安全审计 PoC
+        run: node audit/run-all.mjs
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # 建 Release 与上传附件
+      id-token: write   # npm Trusted Publishing(OIDC) 必需，只授予这个 job
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Trusted Publishing 要求 npm ≥ 11.5.1，runner 自带的偏旧；固定版本而不是 @latest
+      - name: 升级 npm
+        run: npm install -g npm@11.5.1
+
+      - name: 安装依赖
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # 幂等：若该版本已存在（例如先本地手发过），跳过而不是把整个 Release 卡死
+      - name: 发布到 npm
+        run: |
+          V="$(node -p "require('./package.json').version")"
+          if npm view "dsh-session-reattach@$V" version >/dev/null 2>&1; then
+            echo "npm 上已存在 $V，跳过发布"
+          else
+            npm publish --provenance --access public
+          fi
+
+      - name: 打包 tgz
+        run: |
+          V="$(node -p "require('./package.json').version")"
+          npm pack
+          cp "dsh-session-reattach-$V.tgz" dsh-session-reattach.tgz
+          ls -la ./*.tgz
+
+      - name: 建 Release 并上传附件
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="$(node -p "require('./package.json').version")"
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" \
+            "dsh-session-reattach-$V.tgz" dsh-session-reattach.tgz \
+            --clobber

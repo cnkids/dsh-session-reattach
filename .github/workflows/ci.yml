@@ -1,0 +1,43 @@
+name: CI
+
+# main 推送与 PR 都跑测试与审计。
+# 发布工作流（release.yml）只在推 v* tag 时跑，没有这一层的话，坏掉的 main
+# 要等到发版那一刻才发现。
+#
+# 说明：engines 声明 >=20，与兄弟项目一致；CI 固定在 22（release.yml 同版本），
+# 避免把「测试脚本的 node --test 通配符在 20 上的差异」混进发布门禁。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: 安装依赖
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: 依赖漏洞扫描
+        run: npm audit --audit-level=high
+
+      - name: 测试
+        run: npm test
+
+      # poc3/poc4 需要本机真实 @deepseek-ai/dsh-workspace，CI 上自行跳过（退出码 0）；
+      # 其余 PoC 真跑，包含真 socket 的 413/HTTP 语义、DOM 注入面与产物完整性。
+      - name: 安全审计 PoC
+        run: node audit/run-all.mjs

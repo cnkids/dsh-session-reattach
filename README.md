@@ -240,6 +240,36 @@ export SONAR_TOKEN_DSH_SESSION_REATTACH=sqp_xxxxxxxx
 
 `single.code` 取值：`ok` / `already-accounted` / `cwd-invalid` / `no-workspace` / `workspace-mismatch` / `workspace-not-found` / `session-live` / `session-archived` / `session-subagent` / `session-not-found`；内部故障一律 `internal-error`（细节只进宿主日志）。
 
+### 发布（npm + GitHub Actions）
+
+`v*` tag 由 `.github/workflows/release.yml` 接管：校验 tag 与 `package.json` 版本一致 → `npm ci` → `npm audit` → `npm test` → 审计 PoC → `npm publish --provenance`（**OIDC，无需任何 token secret**）→ 建 GitHub Release 并附 `.tgz`；`main` 推送与 PR 由 `ci.yml` 跑同一套测试与审计。
+
+**首次发布必须先手工做一次**：npm 没有 `pending publisher`，包在 registry 上不存在时**无法配置 Trusted Publisher**（会得到误导性的 `404 … is not in this registry`）。顺序是：
+
+```sh
+# ① 手工首发（会要 2FA 或一个启用了 bypass-2fa 的 granular token）
+npm login
+npm publish --access public
+
+# ② 到 npmjs.com 的包设置里配置 Trusted Publisher → GitHub Actions：
+#    组织/用户 = cnkids   仓库 = dsh-session-reattach
+#    工作流文件名 = release.yml
+#    环境 = 留空（发布 job 不引用 environment，两边必须一致，否则 OIDC 声明不匹配）
+
+# ③ 推仓库与 tag；首个 tag 会在「已存在同版本」时**跳过** npm 步骤并照常建 Release
+git remote add origin git@github.com:cnkids/dsh-session-reattach.git
+git push -u origin main
+git tag v0.1.1 && git push origin v0.1.1
+```
+
+从**下一个版本**开始，trusted publishing 才真正接管：改 `package.json` 版本 → 同步本文件版本记录 → 提交 → `git tag vX.Y.Z && git push origin vX.Y.Z`，CI 直接发布（provenance 自动附带）。
+
+三个容易踩的点（都是实测教训，不是理论）：
+
+- **`npm ci` 需要 `package-lock.json`** —— 本仓库零运行时依赖，所以 lockfile 很小，但必须有（`poc8` 会断言它在）。
+- **Trusted Publishing 要求 npm ≥ 11.5.1**，而 Node 22 自带 npm 10.x；版本不够时 `npm publish` 会返回**误导性的 404**。发布 job 因此固定 `npm install -g npm@11.5.1`。
+- **发布 job 不引用受保护环境**：`environment` 的审批门在 GitHub 侧故障时会卡死发布；npm 侧的 Environment 也必须**留空**才能与之一致。发布靠 OIDC 短时令牌 + provenance 兜底。
+
 ## 版本记录
 
 | 版本 | 变更 |

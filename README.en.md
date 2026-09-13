@@ -239,6 +239,38 @@ export SONAR_TOKEN_DSH_SESSION_REATTACH=sqp_xxxxxxxx
 
 `single.code` is one of `ok`, `already-accounted`, `cwd-invalid`, `no-workspace`, `workspace-mismatch`, `workspace-not-found`, `session-live`, `session-archived`, `session-subagent`, `session-not-found`; internal faults are always `internal-error` (details go to the host log only).
 
+### Releasing (npm + GitHub Actions)
+
+A `v*` tag is handled by `.github/workflows/release.yml`: tag↔version check → `npm ci` → `npm audit` → `npm test` → audit PoCs → `npm publish --provenance` (**OIDC, no token secret at all**) → create the GitHub Release with the `.tgz` attached. Pushes to `main` and PRs run the same tests and audit through `ci.yml`.
+
+**The very first publish must be done by hand** — npm has no pending publisher, so a package that does not exist yet **cannot be configured for trusted publishing** (you get a misleading `404 … is not in this registry`). The order is:
+
+```sh
+# 1. bootstrap locally (needs 2FA, or a granular token with bypass-2fa enabled)
+npm login
+npm publish --access public
+
+# 2. on npmjs.com → package settings → Trusted Publisher → GitHub Actions:
+#    Organization/user = cnkids   Repository = dsh-session-reattach
+#    Workflow filename = release.yml
+#    Environment = leave blank (the publish job declares none; both sides must match
+#    or the OIDC claims do not line up)
+
+# 3. push the repo and the tag; the first tag skips the npm step (same version already
+#    exists) and still creates the Release
+git remote add origin git@github.com:cnkids/dsh-session-reattach.git
+git push -u origin main
+git tag v0.1.1 && git push origin v0.1.1
+```
+
+From the **next** version onward trusted publishing takes over: bump `package.json`, sync the changelog here, commit, `git tag vX.Y.Z && git push origin vX.Y.Z`.
+
+Three measured gotchas:
+
+- **`npm ci` needs `package-lock.json`** — this package has zero dependencies, so the lockfile is tiny, but it must exist (`poc8` asserts it does).
+- **Trusted publishing requires npm ≥ 11.5.1**, while Node 22 ships npm 10.x; with an older npm the publish fails with a **misleading 404**. The publish job therefore pins `npm install -g npm@11.5.1`.
+- **The publish job declares no protected environment** (its approval gate can deadlock a release when GitHub is degraded), and the npm side's Environment field must be **blank** to match. OIDC short-lived credentials plus provenance carry the trust.
+
 ## Changelog
 
 | Version | Changes |
