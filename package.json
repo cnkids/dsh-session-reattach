@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-reattach",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "会话归位：把游离（未分组）会话按 canonical cwd 重新归属到匹配的工作区，只修 workspace 归属记录，不动会话文件。",
   "license": "MIT",
   "type": "module",

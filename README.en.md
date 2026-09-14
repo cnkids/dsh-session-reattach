@@ -272,6 +272,7 @@ Three measured gotchas:
 
 | Version | Changes |
 | --- | --- |
+| **0.1.2** | Docs and repository shape only: the security-audit artefacts (report + 8 PoCs) moved out of the repository, the READMEs no longer point at in-repo paths, CI dropped the audit step, and test fixtures use a synthetic session id. No `lib/` changes — versus 0.1.1 the published files differ in the READMEs and the version field only |
 | **0.1.1** | Security audit landed: an oversized body no longer kills the connection (413 is delivered), the route has an error boundary (host faults return a diagnosable JSON 500 instead of an empty 400), and a capped session list is reported honestly (no more false "nothing to re-attach"). Audited with 8 PoCs (real sockets, the real `WorkspaceEntity`, live-host guard probes; artefacts are not shipped with the repo); README restructured to match `dsh-palimpsest` and given security boundaries; tests 105 → 121 |
 | **0.1.0** | First release: host-side re-attach core (realpath canon, five-way classification, detach-then-attach), HTTP route reusing the `/api` guard with dry-run by default, `/reattach [apply] [subagents]`, browser-half drag and drop (pre-filtered highlight + toast), zero runtime dependencies |
 
